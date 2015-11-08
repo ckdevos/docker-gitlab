@@ -1,17 +1,24 @@
 #!/bin/bash
 set -e
 
-GEM_CACHE_DIR="${SETUP_DIR}/cache"
+GEM_CACHE_DIR="${SETUP_DIR}/cache.${GITLAB_VERSION}"
+
+# add golang1.5 ppa
+apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv B0B8B106A0CA2F79FBB616DBA65E2E5D742A38EE
+echo "deb http://ppa.launchpad.net/evarlast/golang1.5/ubuntu trusty main" >> /etc/apt/sources.list
 
 # rebuild apt cache
 apt-get update
 
 # install build dependencies for gem installation
-apt-get install -y gcc g++ make patch pkg-config cmake \
-  libc6-dev ruby2.1-dev \
+DEBIAN_FRONTEND=noninteractive apt-get install -y gcc g++ make patch pkg-config cmake paxctl \
+  libc6-dev ruby2.1-dev golang-go \
   libmysqlclient-dev libpq-dev zlib1g-dev libyaml-dev libssl-dev \
   libgdbm-dev libreadline-dev libncurses5-dev libffi-dev \
   libxml2-dev libxslt-dev libcurl4-openssl-dev libicu-dev
+
+# https://en.wikibooks.org/wiki/Grsecurity/Application-specific_Settings#Node.js
+paxctl -Cm `which nodejs`
 
 # remove the host keys generated during openssh-server installation
 rm -rf /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
@@ -44,6 +51,12 @@ cd ${GITLAB_SHELL_INSTALL_DIR}
 sudo -u git -H cp -a config.yml.example config.yml
 sudo -u git -H ./bin/install
 
+echo "Cloning gitlab-git-http-server v.${GITLAB_GIT_HTTP_SERVER_VERSION}..."
+sudo -u git -H git clone -q -b ${GITLAB_GIT_HTTP_SERVER_VERSION} --depth 1 \
+  https://gitlab.com/gitlab-org/gitlab-git-http-server.git ${GITLAB_GIT_HTTP_SERVER_INSTALL_DIR}
+cd ${GITLAB_GIT_HTTP_SERVER_INSTALL_DIR}
+sudo -u git -H make
+
 # shallow clone gitlab-ce
 echo "Cloning gitlab-ce v.${GITLAB_VERSION}..."
 sudo -HEu ${GITLAB_USER} git clone -q -b v${GITLAB_VERSION} --depth 1 \
@@ -63,6 +76,20 @@ sudo -HEu ${GITLAB_USER} cp config/unicorn.rb.example config/unicorn.rb
 sudo -HEu ${GITLAB_USER} cp config/initializers/rack_attack.rb.example config/initializers/rack_attack.rb
 sudo -HEu ${GITLAB_USER} cp config/initializers/smtp_settings.rb.sample config/initializers/smtp_settings.rb
 
+# install gems required by gitlab, use local cache if available
+if [[ -d ${GEM_CACHE_DIR} ]]; then
+  mv ${GEM_CACHE_DIR} vendor/cache
+  chown -R ${GITLAB_USER}:${GITLAB_USER} vendor/cache
+fi
+sudo -HEu ${GITLAB_USER} bundle install -j$(nproc) --deployment --without development test aws
+
+# make sure everything in ${GITLAB_HOME} is owned by the git user
+chown -R ${GITLAB_USER}:${GITLAB_USER} ${GITLAB_HOME}/
+
+# compile assets
+echo "Compiling assets. Please be patient, this could take a while..."
+sudo -HEu ${GITLAB_USER} bundle exec rake assets:clean assets:precompile >/dev/null 2>&1
+
 # symlink log -> ${GITLAB_LOG_DIR}/gitlab
 rm -rf log
 ln -sf ${GITLAB_LOG_DIR}/gitlab log
@@ -70,14 +97,6 @@ ln -sf ${GITLAB_LOG_DIR}/gitlab log
 # create required tmp directories
 sudo -HEu ${GITLAB_USER} mkdir -p tmp/pids/ tmp/sockets/
 chmod -R u+rwX tmp
-
-# create symlink to assets in tmp/cache
-rm -rf tmp/cache
-sudo -HEu ${GITLAB_USER} ln -s ${GITLAB_DATA_DIR}/tmp/cache tmp/cache
-
-# create symlink to assets in public/assets
-rm -rf public/assets
-sudo -HEu ${GITLAB_USER} ln -s ${GITLAB_DATA_DIR}/tmp/public/assets public/assets
 
 # create symlink to uploads directory
 rm -rf public/uploads
@@ -87,15 +106,8 @@ sudo -HEu ${GITLAB_USER} ln -s ${GITLAB_DATA_DIR}/uploads public/uploads
 rm -rf .secret
 sudo -HEu ${GITLAB_USER} ln -sf ${GITLAB_DATA_DIR}/.secret
 
-# install gems required by gitlab, use local cache if available
-if [[ -d ${GEM_CACHE_DIR} ]]; then
-  mv ${GEM_CACHE_DIR} vendor/
-  chown -R ${GITLAB_USER}:${GITLAB_USER} vendor/cache
-fi
-sudo -HEu ${GITLAB_USER} bundle install -j$(nproc) --deployment --without development test aws
-
-# make sure everything in ${GITLAB_HOME} is owned by the git user
-chown -R ${GITLAB_USER}:${GITLAB_USER} ${GITLAB_HOME}/
+# remove auto generated config/secrets.yml
+rm -rf config/secrets.yml
 
 # install gitlab bootscript
 cp lib/support/init.d/gitlab /etc/init.d/gitlab
@@ -202,6 +214,8 @@ command=bundle exec sidekiq -c {{SIDEKIQ_CONCURRENCY}}
   -q system_hook
   -q project_web_hook
   -q gitlab_shell
+  -q incoming_email
+  -q runner
   -q common
   -q default
   -e ${RAILS_ENV}
@@ -213,6 +227,39 @@ autostart=true
 autorestart=true
 stdout_logfile=${GITLAB_LOG_DIR}/supervisor/%(program_name)s.log
 stderr_logfile=${GITLAB_LOG_DIR}/supervisor/%(program_name)s.log
+EOF
+
+# configure supervisord to start gitlab-git-http-server
+cat > /etc/supervisor/conf.d/gitlab-git-http-server.conf <<EOF
+[program:gitlab-git-http-server]
+priority=20
+directory=${GITLAB_INSTALL_DIR}
+environment=HOME=${GITLAB_HOME}
+command=${GITLAB_GIT_HTTP_SERVER_INSTALL_DIR}/gitlab-git-http-server
+  -listenUmask 0
+  -listenNetwork unix
+  -listenAddr ${GITLAB_INSTALL_DIR}/tmp/sockets/gitlab-git-http-server.socket
+  -authBackend http://127.0.0.1:8080
+  {{GITLAB_REPOS_DIR}}
+user=git
+autostart=true
+autorestart=true
+stdout_logfile=${GITLAB_INSTALL_DIR}/log/%(program_name)s.log
+stderr_logfile=${GITLAB_INSTALL_DIR}/log/%(program_name)s.log
+EOF
+
+# configure supervisord to start mail_room
+cat > /etc/supervisor/conf.d/mail_room.conf <<EOF
+[program:mail_room]
+priority=20
+directory=${GITLAB_INSTALL_DIR}
+environment=HOME=${GITLAB_HOME}
+command=bundle exec mail_room -c ${GITLAB_INSTALL_DIR}/config/mail_room.yml
+user=git
+autostart={{GITLAB_INCOMING_EMAIL_ENABLED}}
+autorestart=true
+stdout_logfile=${GITLAB_INSTALL_DIR}/log/%(program_name)s.log
+stderr_logfile=${GITLAB_INSTALL_DIR}/log/%(program_name)s.log
 EOF
 
 # configure supervisor to start sshd
@@ -255,8 +302,8 @@ stderr_logfile=${GITLAB_LOG_DIR}/supervisor/%(program_name)s.log
 EOF
 
 # purge build dependencies
-apt-get purge -y --auto-remove gcc g++ make patch pkg-config cmake \
-  libc6-dev ruby2.1-dev \
+apt-get purge -y --auto-remove gcc g++ make patch pkg-config cmake paxctl \
+  libc6-dev ruby2.1-dev golang-go \
   libmysqlclient-dev libpq-dev zlib1g-dev libyaml-dev libssl-dev \
   libgdbm-dev libreadline-dev libncurses5-dev libffi-dev \
   libxml2-dev libxslt-dev libcurl4-openssl-dev libicu-dev

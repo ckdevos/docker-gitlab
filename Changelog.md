@@ -2,6 +2,78 @@
 
 This file only reflects the changes that are made in the the docker image. Please refer to the upstream GitLab [CHANGELOG](https://github.com/gitlabhq/gitlabhq/blob/master/CHANGELOG) for the list of changes in GitLab.
 
+**8.1.3**
+- proper long-term fix for http/https cloning when `GITLAB_RELATIVE_URL_ROOT` is used
+- gitlab: upgrade to CE v8.1.3
+- Expose Facebook OAUTH configuration parameters
+
+**8.1.2**
+- gitlab: upgrade to CE v8.1.2
+- removed `GITLAB_SATELLITES_TIMEOUT` configuration parameter
+
+**8.1.0-2**
+- Recompile assets when `GITLAB_RELATIVE_URL_ROOT` is used Fixes #481
+
+**8.1.0-1**
+- temporary fix for http/https cloning when `GITLAB_RELATIVE_URL_ROOT` is used
+
+**8.1.0**
+- gitlab: upgrade to CE v8.1.0
+- gitlab-git-http-server: upgrade to v0.3.0
+
+**8.0.5-1**
+- speed up container startup by compiling assets at image build time
+- test connection to redis-server
+
+**8.0.5**
+- gitlab: upgrade to CE v.8.0.5
+
+**8.0.4-2**
+- fix http/https cloning when `GITLAB_RELATIVE_URL_ROOT` is used
+- allow user to override `OAUTH_ENABLED` setting
+
+**8.0.4-1**
+- update baseimage to `sameersbn/ubuntu:14.04.20151011`
+
+**8.0.4**
+- gitlab: upgrade to CE v.8.0.4
+
+**8.0.3**
+- gitlab: upgrade to CE v.8.0.3
+
+**8.0.2**
+- gitlab: upgrade to CE v.8.0.2
+- added `IMAP_STARTTLS` parameter, defaults to `false`
+- expose oauth parameters for crowd server
+
+**8.0.0**
+- set default value of `DB_TYPE` to `postgres`
+- added sample Kubernetes rc and service description files
+- expose `GITLAB_BACKUP_ARCHIVE_PERMISSIONS` parameter
+- gitlab: upgrade to CE v.8.0.0
+- added `GITLAB_SECRETS_DB_KEY_BASE` parameter
+- added `GITLAB_NOTIFY_ON_BROKEN_BUILDS` and `GITLAB_NOTIFY_PUSHER` parameters
+- added options to email IMAP and reply by email feature
+- set value of `GITLAB_EMAIL` to `SMTP_USER` if defined, else default to `example@example.com`
+- removed `GITLAB_ROBOTS_OVERRIDE` parameter. Override default `robots.txt` if `GITLAB_ROBOTS_PATH` exists.
+- added CI redirection using `GITLAB_CI_HOST` parameter
+
+**7.14.3**
+- gitlab: upgrade to CE v.7.14.3
+
+**7.14.2**
+- Apply grsecurity policies to nodejs binary #394
+- Fix broken emojis post migration #196
+- gitlab-shell: upgrade to v.2.6.5
+- gitlab: upgrade to CE v.7.14.2
+
+**7.14.1**
+- gitlab: upgrade to CE v.7.14.1
+
+**7.14.0**
+- gitlab-shell: upgrade to v.2.6.4
+- gitlab: upgrade to CE v.7.14.0
+
 **7.13.5**
 - gitlab: upgrade to CE v.7.13.5
 
